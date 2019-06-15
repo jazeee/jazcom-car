@@ -1,7 +1,8 @@
 ## Android app to talk to Bluetooth app
 
-This is wired to talk to a bluetooth Raspberry PI device which
-responds with text.
+This is designed to talk to a bluetooth Android config.
 
-Must be paired with a matching app and device.
+Must be paired with a matching HC06 Bluetooth device.
+
+Companion Arduino code: https://github.com/jazeee/jazcom-car-bluetooth
 
