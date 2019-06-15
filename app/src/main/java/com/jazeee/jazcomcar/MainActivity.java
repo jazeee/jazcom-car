@@ -6,50 +6,42 @@ import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
 import android.os.Handler;
+import android.os.Message;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Random;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class MainActivity extends AppCompatActivity {
-  BluetoothDevice bluetoothDevice = null;
-  LocalSocket localSocket;
+public class MainActivity extends AppCompatActivity implements ITokenListener, IGlucoseListener {
+  private final List<String> logMessages = new ArrayList<>();
+  private BluetoothDevice bluetoothDevice = null;
+  private LocalSocket localSocket;
 
-  final byte delimiter = 33;
-  int readBufferPosition = 0;
-  private final AtomicReference<String> token = new AtomicReference<>(null);
-  private final AtomicLong lastRetrieval = new AtomicLong(0);
   private final AtomicReference<BluetoothSocket> ref = new AtomicReference<>(null);
 
-  private Handler handler;
-  private TextView myLabel;
-  Handler timerHandler = new Handler();
-  long startTime = 0;
-  boolean isTiming = false;
+  private final Handler timerHandler = new Handler();
+  private boolean isTiming = false;
   private final AtomicLong lastTokenTime = new AtomicLong();
 
-  String userName = "";
-  String password = "";
+  private String userName = "";
+  private String password = "";
+
+  private final TokenManager tokenManager = new TokenManager(this);
+  private final GlucoseManager glucoseManager = new GlucoseManager(this);
 
   private class LocalSocket implements AutoCloseable {
     LocalSocket() throws IOException {
@@ -79,67 +71,53 @@ public class MainActivity extends AppCompatActivity {
           bluetoothSocket.close();
         } catch (IOException e) {
           e.printStackTrace();
+          addLog(e.getMessage());
         }
       }
     }
   }
 
-  public BluetoothSocket sendBtMsg(BluetoothSocket bluetoothSocket, String message) throws IOException {
+  public BluetoothSocket sendBluetoothMessage(BluetoothSocket bluetoothSocket, String message) throws IOException {
     message = "JAZ:" + message;
     OutputStream outputStream = bluetoothSocket.getOutputStream();
     outputStream.write(message.getBytes());
     return bluetoothSocket;
   }
 
-  final class workerThread implements Runnable {
-    private String message;
+  Handler logHandler = new Handler(new Handler.Callback() {
+    @Override
+    public boolean handleMessage(Message messageData) {
+      String message = (String) messageData.obj;
+      logMessages.add(message);
+      while (logMessages.size() > 16) {
+        logMessages.remove(0);
+      }
+      EditText logConsole = (EditText) findViewById(R.id.logConsole);
+      logConsole.setText(TextUtils.join(System.getProperty("line.separator"), logMessages));
+      return false;
+    }
+  });
 
-    public workerThread(String message) {
-      this.message = message;
+  public void addLog(String line) {
+    Message messageData = new Message();
+    messageData.obj = line;
+    logHandler.sendMessage(messageData);
+  }
+
+  final class BluetoothPublisher implements Runnable {
+    private GlucoseReading glucoseReading;
+
+    public BluetoothPublisher(GlucoseReading glucoseReading) {
+      this.glucoseReading = glucoseReading;
     }
 
     public void run() {
       try {
         final BluetoothSocket bluetoothSocket = localSocket.reconnectIfNeeded();
-        sendBtMsg(bluetoothSocket, message);
-        while (!Thread.currentThread().isInterrupted() && bluetoothSocket.isConnected()) {
-          boolean workDone = false;
-
-          final InputStream inputStream = bluetoothSocket.getInputStream();
-          int bytesAvailable = inputStream.available();
-          if (bytesAvailable > 0) {
-            byte[] packetBytes = new byte[bytesAvailable];
-            Log.e("JazCom Car Bytes", "bytes available");
-            byte[] readBuffer = new byte[1024];
-            inputStream.read(packetBytes);
-
-            for (int i = 0; i < bytesAvailable; i++) {
-              byte b = packetBytes[i];
-              if (b == delimiter) {
-                byte[] encodedBytes = new byte[readBufferPosition];
-                System.arraycopy(readBuffer, 0, encodedBytes, 0, encodedBytes.length);
-                final String data = new String(encodedBytes, "US-ASCII");
-                readBufferPosition = 0;
-
-                handler.post(new Runnable() {
-                  public void run() {
-                    myLabel.setText(data);
-                  }
-                });
-                workDone = true;
-                break;
-              } else {
-                readBuffer[readBufferPosition++] = b;
-              }
-            }
-            if (workDone == true) {
-              bluetoothSocket.close();
-              break;
-            }
-          }
-        }
+        sendBluetoothMessage(bluetoothSocket, glucoseReading.getGlucoseValue());
       } catch (IOException e) {
         e.printStackTrace();
+        addLog(e.getMessage());
       }
     }
   }
@@ -147,26 +125,35 @@ public class MainActivity extends AppCompatActivity {
   Runnable timerRunnable = new Runnable() {
     @Override
     public void run() {
-      long millis = System.currentTimeMillis() - startTime;
-      int seconds = (int) (millis / 1000);
-      int minutes = seconds / 60;
-      seconds = seconds % 60;
-
-      getLatestGlucose();
-      TextView log = findViewById(R.id.log);
-      log.setText(String.format("%d:%02d", minutes, seconds));
-
-      timerHandler.postDelayed(this, 5 * 60 * 1000);
+    getLatestGlucose();
+    timerHandler.postDelayed(this, 5 * 60 * 1000);
     }
   };
 
   protected void getLatestGlucose() {
     long now = System.currentTimeMillis();
     boolean shouldGetNewToken = (now - lastTokenTime.get() > 45 * 60_000);
-    if (token.get() == null || shouldGetNewToken) {
-      new GetToken().execute(userName, password);
+    if (tokenManager.getToken() == null || shouldGetNewToken) {
+      tokenManager.requestTokenAsync(userName, password);
     } else {
-      new GetGlucose().execute();
+      glucoseManager.requestGlucoseAsync(tokenManager.getToken());
+    }
+  }
+
+  @Override
+  public void onTokenProcessed(boolean isSuccessful, String logMessage) {
+    addLog(logMessage);
+    if (isSuccessful) {
+      glucoseManager.requestGlucoseAsync(tokenManager.getToken());
+    }
+  }
+
+  public void onGlucoseRead(GlucoseReading glucoseReading, String logMessage) {
+    addLog(logMessage);
+    if (glucoseReading != null) {
+      final TextView statusText = (TextView) findViewById(R.id.statusText);
+      statusText.setText(glucoseReading.getGlucoseValue() + " Trend: " + glucoseReading.getTrend());
+      (new Thread(new BluetoothPublisher(glucoseReading))).start();
     }
   }
 
@@ -174,8 +161,6 @@ public class MainActivity extends AppCompatActivity {
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
-
-    this.handler = new Handler();
 
     final TextView statusText = (TextView) findViewById(R.id.statusText);
     final Button updateGlucoseButton = (Button) findViewById(R.id.updateGlucose);
@@ -211,8 +196,7 @@ public class MainActivity extends AppCompatActivity {
 
     updateGlucoseButton.setOnClickListener(new View.OnClickListener() {
       public void onClick(View v) {
-        String value = "" + (new Random().nextInt(70) + 70);
-        statusText.setText("Sending... Random: " + value);
+        statusText.setText("Sending...");
         getLatestGlucose();
       }
     });
@@ -251,84 +235,14 @@ public class MainActivity extends AppCompatActivity {
         localSocket = new LocalSocket();
       } catch (IOException e) {
         e.printStackTrace();
+        addLog(e.getMessage());
       }
     }
-    startTime = System.currentTimeMillis();
   }
 
   @Override
   protected void onDestroy() {
     super.onDestroy();
     localSocket.close();
-  }
-
-  private class GetToken extends AsyncTask<String, String, String> {
-    protected String doInBackground(String... inputParams) {
-      String userName = inputParams[0];
-      String password = inputParams[1];
-      try {
-        String url = "https://share1.dexcom.com/ShareWebServices/Services/General/LoginPublisherAccountByName";
-        JSONObject jsonParam = new JSONObject();
-        jsonParam.put("applicationId", "d8665ade-9673-4e27-9ff6-92db4ce13d13");
-        jsonParam.put("accountName", userName);
-        jsonParam.put("password", password);
-        return PostHttp.postHttp(url, null, jsonParam);
-      } catch (JSONException e) {
-        e.printStackTrace();
-        return null;
-      }
-    }
-
-    @Override
-    protected void onPostExecute(String result) {
-      super.onPostExecute(result);
-      boolean isValidToken = result != null;
-      if (isValidToken) {
-        token.set(result.replace("\"", ""));
-        lastRetrieval.set(System.currentTimeMillis());
-        result = "Retrieved token" + result.substring(0, 5);
-      } else {
-        result = "Unable to read password";
-      }
-      if (isValidToken) {
-        new GetGlucose().execute();
-      }
-      final TextView statusText = (TextView) findViewById(R.id.statusText);
-      statusText.setText("Pwd: " + result);
-    }
-  }
-
-  private class GetGlucose extends AsyncTask<String, String, String> {
-    protected String doInBackground(String... inputParams) {
-      String url = "https://share1.dexcom.com/ShareWebServices/Services/Publisher/ReadPublisherLatestGlucoseValues";
-      Map<String, String> params = new HashMap<>();
-      params.put("sessionId", token.get());
-      params.put("minutes", "1440");
-      params.put("maxCount", "1");
-      JSONObject jsonParams = new JSONObject();
-      return PostHttp.postHttp(url, params, null);
-    }
-
-    @Override
-    protected void onPostExecute(String result) {
-      super.onPostExecute(result);
-      String glucoseValue = "?";
-      if (result != null) {
-        try {
-          JSONArray data = new JSONArray(result);
-          JSONObject output = data.getJSONObject(0);
-          glucoseValue = output.getString("Value");
-          result = glucoseValue;
-        } catch (JSONException e) {
-          e.printStackTrace();
-        }
-        result = "Retrieved value" + result;
-      } else {
-        result = "Unable to read data";
-      }
-      final TextView statusText = (TextView) findViewById(R.id.statusText);
-      statusText.setText("Data: " + result);
-      (new Thread(new workerThread(glucoseValue))).start();
-    }
   }
 }
