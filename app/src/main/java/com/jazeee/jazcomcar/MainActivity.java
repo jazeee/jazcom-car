@@ -1,6 +1,5 @@
 package com.jazeee.jazcomcar;
 
-import android.app.AlarmManager;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
@@ -34,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class MainActivity extends AppCompatActivity {
   BluetoothDevice bluetoothDevice = null;
+  LocalSocket localSocket;
+
   final byte delimiter = 33;
   int readBufferPosition = 0;
   private final AtomicReference<String> token = new AtomicReference<>(null);
@@ -43,10 +44,9 @@ public class MainActivity extends AppCompatActivity {
   private Handler handler;
   private TextView myLabel;
   Handler timerHandler = new Handler();
-  AlarmManager alarmManager;
   long startTime = 0;
   boolean isTiming = false;
-  int nextInt = 0;
+  private final AtomicLong lastTokenTime = new AtomicLong();
 
   String userName = "";
   String password = "";
@@ -56,10 +56,15 @@ public class MainActivity extends AppCompatActivity {
       close();
       UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
       BluetoothSocket bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
+      ref.set(bluetoothSocket);
+    }
+
+    BluetoothSocket reconnectIfNeeded() throws IOException {
+      BluetoothSocket bluetoothSocket = get();
       if (!bluetoothSocket.isConnected()){
         bluetoothSocket.connect();
       }
-      ref.set(bluetoothSocket);
+      return bluetoothSocket;
     }
 
     public BluetoothSocket get() {
@@ -80,23 +85,23 @@ public class MainActivity extends AppCompatActivity {
   }
 
   public BluetoothSocket sendBtMsg(BluetoothSocket bluetoothSocket, String message) throws IOException {
-    message = "EXT_MESSAGE:" + message;
+    message = "JAZ:" + message;
     OutputStream outputStream = bluetoothSocket.getOutputStream();
     outputStream.write(message.getBytes());
     return bluetoothSocket;
   }
 
   final class workerThread implements Runnable {
-    private String btMsg;
+    private String message;
 
-    public workerThread(String msg) {
-      btMsg = msg;
+    public workerThread(String message) {
+      this.message = message;
     }
 
     public void run() {
-      try (LocalSocket localSocket = new LocalSocket()){
-        final BluetoothSocket bluetoothSocket = localSocket.get();
-        sendBtMsg(bluetoothSocket, btMsg);
+      try {
+        final BluetoothSocket bluetoothSocket = localSocket.reconnectIfNeeded();
+        sendBtMsg(bluetoothSocket, message);
         while (!Thread.currentThread().isInterrupted() && bluetoothSocket.isConnected()) {
           boolean workDone = false;
 
@@ -156,7 +161,9 @@ public class MainActivity extends AppCompatActivity {
   };
 
   protected void getLatestGlucose() {
-    if (token.get() == null) {
+    long now = System.currentTimeMillis();
+    boolean shouldGetNewToken = (now - lastTokenTime.get() > 45 * 60_000);
+    if (token.get() == null || shouldGetNewToken) {
       new GetToken().execute(userName, password);
     } else {
       new GetGlucose().execute();
@@ -184,20 +191,20 @@ public class MainActivity extends AppCompatActivity {
     userNameInput.setOnFocusChangeListener(new View.OnFocusChangeListener() {
       @Override
       public void onFocusChange(View view, boolean isFocused) {
-        if (!isFocused) {
-          userName = userNameInput.getText().toString();
-          sharedPreferences.edit().putString("userName", userName).commit();
-        }
+      if (!isFocused) {
+        userName = userNameInput.getText().toString();
+        sharedPreferences.edit().putString("userName", userName).commit();
+      }
       }
     });
 
     passwordInput.setOnFocusChangeListener(new View.OnFocusChangeListener() {
       @Override
       public void onFocusChange(View view, boolean isFocused) {
-        if (!isFocused) {
-          password = passwordInput.getText().toString();
-          sharedPreferences.edit().putString("password", password).commit();
-        }
+      if (!isFocused) {
+        password = passwordInput.getText().toString();
+        sharedPreferences.edit().putString("password", password).commit();
+      }
       }
     });
 
@@ -239,7 +246,20 @@ public class MainActivity extends AppCompatActivity {
         }
       }
     }
+    if (bluetoothDevice != null) {
+      try {
+        localSocket = new LocalSocket();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
     startTime = System.currentTimeMillis();
+  }
+
+  @Override
+  protected void onDestroy() {
+    super.onDestroy();
+    localSocket.close();
   }
 
   private class GetToken extends AsyncTask<String, String, String> {
@@ -262,16 +282,19 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPostExecute(String result) {
       super.onPostExecute(result);
-      if (result != null) {
+      boolean isValidToken = result != null;
+      if (isValidToken) {
         token.set(result.replace("\"", ""));
         lastRetrieval.set(System.currentTimeMillis());
         result = "Retrieved token" + result.substring(0, 5);
       } else {
         result = "Unable to read password";
       }
+      if (isValidToken) {
+        new GetGlucose().execute();
+      }
       final TextView statusText = (TextView) findViewById(R.id.statusText);
       statusText.setText("Pwd: " + result);
-      new GetGlucose().execute();
     }
   }
 
@@ -305,7 +328,7 @@ public class MainActivity extends AppCompatActivity {
       }
       final TextView statusText = (TextView) findViewById(R.id.statusText);
       statusText.setText("Data: " + result);
-      (new Thread(new workerThread(glucoseValue + " " + (nextInt++ % 10)))).start();
+      (new Thread(new workerThread(glucoseValue))).start();
     }
   }
 }
