@@ -21,6 +21,12 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import com.jazeee.bluetooth.BluetoothService;
+import com.jazeee.jazcomcar.glucose.GlucoseManager;
+import com.jazeee.jazcomcar.glucose.GlucoseReading;
+import com.jazeee.jazcomcar.glucose.IGlucoseListener;
+import com.jazeee.jazcomcar.glucose.ITokenListener;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;

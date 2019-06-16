@@ -1,7 +1,8 @@
-package com.jazeee.jazcomcar;
+package com.jazeee.jazcomcar.glucose;
 
 import android.os.AsyncTask;
-import android.widget.TextView;
+
+import com.jazeee.jazcomcar.PostHttp;
 
 import org.json.JSONArray;
 import org.json.JSONException;

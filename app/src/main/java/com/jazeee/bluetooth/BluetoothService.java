@@ -1,4 +1,4 @@
-package com.jazeee.jazcomcar;
+package com.jazeee.bluetooth;
 
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
@@ -13,7 +13,6 @@ import android.util.Log;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class BluetoothService extends Service {
   public static final String MESSAGE_NAME = "BLUETOOTH_MESSAGE";
@@ -24,7 +23,7 @@ public class BluetoothService extends Service {
 
 
   public class LocalBinder extends Binder {
-    BluetoothService getService() {
+    public BluetoothService getService() {
       return BluetoothService.this;
     }
   }

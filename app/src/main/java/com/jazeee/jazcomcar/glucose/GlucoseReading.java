@@ -1,4 +1,4 @@
-package com.jazeee.jazcomcar;
+package com.jazeee.jazcomcar.glucose;
 
 import org.json.JSONException;
 import org.json.JSONObject;

@@ -1,6 +1,4 @@
-package com.jazeee.jazcomcar;
-
-import android.util.Log;
+package com.jazeee.jazcomcar.glucose;
 
 public enum GlucoseTrend {
   UP_UP(1),

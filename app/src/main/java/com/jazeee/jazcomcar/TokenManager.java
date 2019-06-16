@@ -2,6 +2,8 @@ package com.jazeee.jazcomcar;
 
 import android.os.AsyncTask;
 
+import com.jazeee.jazcomcar.glucose.ITokenListener;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 

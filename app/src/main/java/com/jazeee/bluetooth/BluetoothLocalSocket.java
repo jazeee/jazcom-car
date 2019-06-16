@@ -1,4 +1,4 @@
-package com.jazeee.jazcomcar;
+package com.jazeee.bluetooth;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
