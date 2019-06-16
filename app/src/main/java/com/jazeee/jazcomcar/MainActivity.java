@@ -1,13 +1,17 @@
 package com.jazeee.jazcomcar;
 
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothSocket;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Message;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -17,21 +21,12 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class MainActivity extends AppCompatActivity implements ITokenListener, IGlucoseListener {
   private final List<String> logMessages = new ArrayList<>();
-  private BluetoothDevice bluetoothDevice = null;
-  private LocalSocket localSocket;
-
-  private final AtomicReference<BluetoothSocket> ref = new AtomicReference<>(null);
 
   private final Handler timerHandler = new Handler();
   private boolean isTiming = false;
@@ -43,45 +38,34 @@ public class MainActivity extends AppCompatActivity implements ITokenListener, I
   private final TokenManager tokenManager = new TokenManager(this);
   private final GlucoseManager glucoseManager = new GlucoseManager(this);
 
-  private class LocalSocket implements AutoCloseable {
-    LocalSocket() throws IOException {
-      close();
-      UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
-      BluetoothSocket bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
-      ref.set(bluetoothSocket);
+  private boolean isBluetoothServiceBound = false;
+  private BluetoothService bluetoothService;
+
+  private ServiceConnection serviceConnection = new ServiceConnection() {
+    public void onServiceConnected(ComponentName className, IBinder service) {
+      bluetoothService = ((BluetoothService.LocalBinder)service).getService();
+      addLog("Connected to BluetoothService");
     }
 
-    BluetoothSocket reconnectIfNeeded() throws IOException {
-      BluetoothSocket bluetoothSocket = get();
-      if (!bluetoothSocket.isConnected()){
-        bluetoothSocket.connect();
-      }
-      return bluetoothSocket;
+    public void onServiceDisconnected(ComponentName className) {
+      bluetoothService = null;
+      addLog("Disconnected from BluetoothService");
     }
-
-    public BluetoothSocket get() {
-      return ref.get();
-    }
-
-    @Override
-    public void close() {
-      BluetoothSocket bluetoothSocket = ref.getAndSet(null);
-      if (bluetoothSocket != null) {
-        try {
-          bluetoothSocket.close();
-        } catch (IOException e) {
-          e.printStackTrace();
-          addLog(e.getMessage());
-        }
-      }
+  };
+  void bindBluetoothService() {
+    if (bindService(new Intent(MainActivity.this, BluetoothService.class),
+        serviceConnection, Context.BIND_AUTO_CREATE)) {
+      isBluetoothServiceBound = true;
+    } else {
+      addLog("Failed to Bind BluetoothService");
     }
   }
 
-  public BluetoothSocket sendBluetoothMessage(BluetoothSocket bluetoothSocket, String message) throws IOException {
-    message = "JAZ:" + message;
-    OutputStream outputStream = bluetoothSocket.getOutputStream();
-    outputStream.write(message.getBytes());
-    return bluetoothSocket;
+  void unbindBluetoothService() {
+    if (isBluetoothServiceBound) {
+      unbindService(serviceConnection);
+      isBluetoothServiceBound = false;
+    }
   }
 
   Handler logHandler = new Handler(new Handler.Callback() {
@@ -98,7 +82,17 @@ public class MainActivity extends AppCompatActivity implements ITokenListener, I
     }
   });
 
+  private BroadcastReceiver logMessageReceiver = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+      // Extract data included in the Intent
+      String logMessage = intent.getStringExtra("message");
+      addLog(logMessage);
+    }
+  };
+
   public void addLog(String line) {
+    Log.i("MainActivity", line);
     Message messageData = new Message();
     messageData.obj = line;
     logHandler.sendMessage(messageData);
@@ -112,12 +106,12 @@ public class MainActivity extends AppCompatActivity implements ITokenListener, I
     }
 
     public void run() {
-      try {
-        final BluetoothSocket bluetoothSocket = localSocket.reconnectIfNeeded();
-        sendBluetoothMessage(bluetoothSocket, glucoseReading.getGlucoseValue());
-      } catch (IOException e) {
-        e.printStackTrace();
-        addLog(e.getMessage());
+      if (isBluetoothServiceBound && bluetoothService != null) {
+        Intent messageIntent = new Intent(MainActivity.this, BluetoothService.class);
+        messageIntent.putExtra(BluetoothService.MESSAGE_NAME, glucoseReading.getGlucoseValue());
+        bluetoothService.onStartCommand(messageIntent, 0, 0);
+      } else {
+        addLog("No BluetoothService");
       }
     }
   }
@@ -212,37 +206,21 @@ public class MainActivity extends AppCompatActivity implements ITokenListener, I
       }
       }
     });
+    LocalBroadcastManager.getInstance(this)
+        .registerReceiver(logMessageReceiver,
+            new IntentFilter(BluetoothService.ADD_LOG_NAME));
 
     BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
     if (!bluetoothAdapter.isEnabled()) {
       Intent enableBluetooth = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
       startActivityForResult(enableBluetooth, 0);
     }
-
-    Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
-    if (pairedDevices.size() > 0) {
-      for (BluetoothDevice device : pairedDevices) {
-        Log.d("Found device: ", device.getName() + "" + device.getAddress());
-        if (device.getName().equals("JazComBT01")) {
-          Log.e("JazComCar Name: ", device.getName());
-          bluetoothDevice = device;
-          break;
-        }
-      }
-    }
-    if (bluetoothDevice != null) {
-      try {
-        localSocket = new LocalSocket();
-      } catch (IOException e) {
-        e.printStackTrace();
-        addLog(e.getMessage());
-      }
-    }
+    bindBluetoothService();
   }
 
   @Override
   protected void onDestroy() {
     super.onDestroy();
-    localSocket.close();
+    unbindBluetoothService();
   }
 }
