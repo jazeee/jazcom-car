@@ -48,7 +48,7 @@ public class BluetoothService extends Service {
       for (BluetoothDevice device : pairedDevices) {
         Log.d("Found device: ", device.getName() + "" + device.getAddress());
         if (device.getName().equals("JazComBT01")) {
-          Log.e("JazComCar Name: ", device.getName());
+          Log.i("JazComCar Name: ", device.getName());
           bluetoothDevice = device;
           break;
         }
