@@ -202,14 +202,14 @@ public class MainActivity extends AppCompatActivity implements ITokenListener, I
     });
     toggleTimer.setOnClickListener(new View.OnClickListener() {
       public void onClick(View v) {
-        isTiming = !isTiming;
-        if (isTiming) {
-          timerHandler.postDelayed(timerRunnable, 0);
-          toggleTimer.setText("Stop Timer");
-        } else {
-          timerHandler.removeCallbacks(timerRunnable);
-          toggleTimer.setText("Restart Timer");
-        }
+      isTiming = !isTiming;
+      if (isTiming) {
+        timerHandler.postDelayed(timerRunnable, 0);
+        toggleTimer.setText("Stop Timer");
+      } else {
+        timerHandler.removeCallbacks(timerRunnable);
+        toggleTimer.setText("Restart Timer");
+      }
       }
     });
 
