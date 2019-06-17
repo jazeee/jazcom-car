@@ -28,11 +28,14 @@ import com.jazeee.bluetooth.BluetoothService;
 import com.jazeee.jazcomcar.glucose.GlucoseReading;
 import com.jazeee.jazcomcar.glucose.GlucoseService;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
   private final List<String> logMessages = new ArrayList<>();
+  private final SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
 
   private boolean isTiming = false;
   private PendingIntent alarmIntent;
@@ -105,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean handleMessage(Message messageData) {
       String message = (String) messageData.obj;
+      message = dateFormat.format(Calendar.getInstance().getTime()) + ": " + message;
       logMessages.add(message);
       while (logMessages.size() > 16) {
         logMessages.remove(0);
