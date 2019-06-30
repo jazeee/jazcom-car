@@ -3,23 +3,26 @@ package com.jazeee.bluetooth;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
+import com.jazeee.logger.ILogger;
+
 import java.io.IOException;
-import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
-public class BluetoothService extends Service {
+public class BluetoothService extends Service implements ILogger {
   public static final String MESSAGE_NAME = "BLUETOOTH_MESSAGE";
   public static final String ADD_LOG_NAME = "BLUETOOTH_SERVICE_LOG";
 
-  private BluetoothDevice bluetoothDevice = null;
-  private BluetoothLocalSocket localSocket;
+  private Map<String, BluetoothDevice> bluetoothDevices = new HashMap<>();
+  private Map<String, BluetoothLocalSocket> localSockets = new HashMap<>();
 
 
   public class LocalBinder extends Binder {
@@ -40,27 +43,35 @@ public class BluetoothService extends Service {
   @Override
   public void onCreate() {
     Log.i(getClass().getCanonicalName(), "onCreate");
-    BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+    for(BluetoothLocalSocket localSocket : localSockets.values()) {
+      localSocket.close();
+    }
+    localSockets.clear();
+    bluetoothDevices.clear();
 
+    Set<BluetoothDevice> matchingBondedDevices = getMatchingBondedDevices();
+    for (BluetoothDevice device : matchingBondedDevices) {
+      bluetoothDevices.put(device.getAddress(), device);
+    }
+    for (String address: bluetoothDevices.keySet()) {
+      BluetoothDevice bluetoothDevice = bluetoothDevices.get(address);
+      BluetoothLocalSocket localSocket = new BluetoothLocalSocket(bluetoothDevice, this);
+      localSockets.put(address, localSocket);
+    }
+  }
+
+  private static Set<BluetoothDevice> getMatchingBondedDevices() {
+    BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
     Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
-    if (pairedDevices.size() > 0) {
-      for (BluetoothDevice device : pairedDevices) {
-        Log.d("Found device: ", device.getName() + "" + device.getAddress());
-        if (device.getName().equals("JazComBT01")) {
-          Log.i("JazComCar Name: ", device.getName());
-          bluetoothDevice = device;
-          break;
-        }
+    Set<BluetoothDevice> matchingDevices = new HashSet<>();
+    for (BluetoothDevice device : pairedDevices) {
+      Log.d("Found device: ", device.getName() + "" + device.getAddress());
+      if (device.getName().startsWith("JazComBT0")) {
+        Log.i("JazComCar Name: ", device.getName());
+        matchingDevices.add(device);
       }
     }
-    if (bluetoothDevice != null) {
-      try {
-        localSocket = new BluetoothLocalSocket(bluetoothDevice);
-      } catch (IOException e) {
-        e.printStackTrace();
-        addLog(e.getMessage());
-      }
-    }
+    return matchingDevices;
   }
 
   @Override
@@ -69,26 +80,33 @@ public class BluetoothService extends Service {
     if (intent != null) {
       String message = intent.getStringExtra(MESSAGE_NAME);
       Log.i(getClass().getCanonicalName(), "Got message " + message);
-      try {
-        sendBluetoothMessage(message);
-      } catch (IOException e) {
-        e.printStackTrace();
-        addLog(e.getMessage());
-      }
+      sendBluetoothMessage(message);
     }
 
     return START_NOT_STICKY;
   }
 
-  private BluetoothSocket sendBluetoothMessage(String message) throws IOException {
-    final BluetoothSocket bluetoothSocket = localSocket.reconnectIfNeeded();
-    message = "JAZ:" + message;
-    OutputStream outputStream = bluetoothSocket.getOutputStream();
-    outputStream.write(message.getBytes());
-    return bluetoothSocket;
+  private void sendBluetoothMessage(String message) {
+    final String updatedMessage = "JAZ:" + message;
+    for (final String address : localSockets.keySet()) {
+      final Thread thread = new Thread() {
+        @Override
+        public void run() {
+          try {
+            BluetoothLocalSocket localSocket = localSockets.get(address);
+            localSocket.sendBluetoothMessage(updatedMessage.getBytes());
+            addLog("Sent to " + address);
+          } catch (IOException e) {
+            e.printStackTrace();
+            addLog(address + " Failed " + e.getMessage());
+          }
+        }
+      };
+      thread.start();
+    }
   }
 
-  private void addLog(String logMessage) {
+  public void addLog(String logMessage) {
     Intent intent = new Intent(ADD_LOG_NAME);
     intent.putExtra("message", logMessage);
     LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
@@ -97,6 +115,8 @@ public class BluetoothService extends Service {
   @Override
   public void onDestroy() {
     Log.i(getClass().getCanonicalName(), "onDestroy");
-    localSocket.close();
+    for (BluetoothLocalSocket localSocket : localSockets.values()) {
+      localSocket.close();
+    }
   }
 }

@@ -74,7 +74,10 @@ public class GlucoseService extends Service implements IGlucoseListener, ITokenL
   public void onTokenProcessed(boolean isSuccessful, String logMessage) {
     addLog(logMessage);
     if (isSuccessful) {
+      lastTokenTime.set(System.currentTimeMillis());
       glucoseManager.requestGlucoseAsync(tokenManager.getToken());
+    } else {
+      lastTokenTime.set(0);
     }
   }
 
