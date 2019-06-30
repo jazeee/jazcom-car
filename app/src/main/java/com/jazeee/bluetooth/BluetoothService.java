@@ -24,7 +24,6 @@ public class BluetoothService extends Service implements ILogger {
   private Map<String, BluetoothDevice> bluetoothDevices = new HashMap<>();
   private Map<String, BluetoothLocalSocket> localSockets = new HashMap<>();
 
-
   public class LocalBinder extends Binder {
     public BluetoothService getService() {
       return BluetoothService.this;
@@ -88,12 +87,13 @@ public class BluetoothService extends Service implements ILogger {
 
   private void sendBluetoothMessage(String message) {
     final String updatedMessage = "JAZ:" + message;
+
     for (final String address : localSockets.keySet()) {
       final Thread thread = new Thread() {
         @Override
         public void run() {
+          BluetoothLocalSocket localSocket = localSockets.get(address);
           try {
-            BluetoothLocalSocket localSocket = localSockets.get(address);
             localSocket.sendBluetoothMessage(updatedMessage.getBytes());
             addLog("Sent to " + address);
           } catch (IOException e) {

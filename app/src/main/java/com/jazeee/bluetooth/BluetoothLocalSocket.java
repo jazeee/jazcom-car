@@ -35,22 +35,30 @@ public class BluetoothLocalSocket implements AutoCloseable {
   private OutputStream getOutputStream() throws IOException {
     BluetoothSocket bluetoothSocket = this.bluetoothSocket.get();
     OutputStream outputStream = this.outputStream.get();
+    if (bluetoothSocket != null && !bluetoothSocket.isConnected()) {
+      addLog("Bluetooth Socket is open, but not connected. Closing.");
+    }
     if (bluetoothSocket == null || !bluetoothSocket.isConnected()) {
+//      if (outputStream != null) {
+//        try {
+//          outputStream.close();
+//        } catch (IOException e) {
+//          // ignore
+//        }
+//        outputStream = null;
+//      }
+//      if (bluetoothSocket != null) {
+//        bluetoothSocket.close();
+//      }
+      close();
+      outputStream = null;
       bluetoothSocket = getBluetoothSocket();
-      if (outputStream != null) {
-        try {
-          outputStream.close();
-        } catch (IOException e) {
-          // ignore
-        }
-        outputStream = null;
-      }
       if (bluetoothSocket != null) {
         addLog("Connecting socket for device: " + bluetoothDevice.getAddress());
         bluetoothSocket.connect();
       }
     }
-    if (outputStream == null) {
+    if (bluetoothSocket != null && outputStream == null) {
       addLog("Opening stream for device: " + bluetoothDevice.getAddress());
       outputStream = bluetoothSocket.getOutputStream();
       this.outputStream.set(outputStream);
@@ -65,16 +73,15 @@ public class BluetoothLocalSocket implements AutoCloseable {
   private void sendBluetoothMessage(byte[] message, boolean isFirstAttempt) throws IOException {
     addLog("Sending message for device: " + bluetoothDevice.getAddress());
     try {
-      getOutputStream().write(message);
+      OutputStream outputStream = getOutputStream();
+      if (outputStream != null && bluetoothSocket.get().isConnected()) {
+        outputStream.write(message);
+      }
     } catch ( IOException e ) {
       e.printStackTrace();
       addLog(e.getMessage());
       close();
-      if (isFirstAttempt) {
-        sendBluetoothMessage(message, false);
-      } else {
-        throw e;
-      }
+      throw e;
     }
   }
 
